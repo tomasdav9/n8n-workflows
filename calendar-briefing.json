@@ -1,0 +1,203 @@
+{
+  "name": "Kalendar briefing",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Prague",
+    "errorWorkflow": "REDACTED_ERROR_WORKFLOW_ID",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Cron 7:00 Po-Pa",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, -96]
+    },
+    {
+      "parameters": {
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "latitude", "value": "49.5938"},
+            {"name": "longitude", "value": "17.2509"},
+            {"name": "daily", "value": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,wind_speed_10m_max"},
+            {"name": "current", "value": "temperature_2m,weathercode"},
+            {"name": "timezone", "value": "Europe/Prague"},
+            {"name": "forecast_days", "value": "1"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "weather",
+      "name": "Open-Meteo Olomouc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [896, 0]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "events",
+        "options": {}
+      },
+      "id": "agg-cal",
+      "name": "Aggregate Events",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [896, -192],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1120, -96]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet events = input.events || [];\nevents = events.filter(e => e.start).sort((a,b) => {\n  const sa = a.start.dateTime || a.start.date;\n  const sb = b.start.dateTime || b.start.date;\n  return new Date(sa) - new Date(sb);\n});\nconst w = input.daily || {};\nconst cur = input.current || {};\n\nconst wmo = {0:'jasno',1:'skoro jasno',2:'polojasno',3:'zatazeno',45:'mlha',48:'namrzajici mlha',51:'mrholeni',53:'mrholeni',55:'mrholeni',61:'slaby dest',63:'dest',65:'silny dest',71:'slabe snezeni',73:'snezeni',75:'silne snezeni',77:'kroupy',80:'prehanky',81:'prehanky',82:'silne prehanky',85:'snehove prehanky',86:'snehove prehanky',95:'bourka',96:'bourka s kroupami',99:'bourka s kroupami'};\n\nconst today = new Date().toLocaleDateString('cs-CZ', {weekday:'long', day:'numeric', month:'long'});\n\nconst tMin = w.temperature_2m_min?.[0];\nconst tMax = w.temperature_2m_max?.[0];\nconst prec = w.precipitation_sum?.[0];\nconst wind = w.wind_speed_10m_max?.[0];\nconst code = w.weathercode?.[0];\nconst desc = wmo[code] || 'neznamo';\nconst tNow = cur.temperature_2m;\n\nlet msg = `🗓 *${today}*\\n\\n`;\nmsg += `🌤 *Počasí Olomouc*\\n`;\nmsg += `${desc}, ${tMin}–${tMax}°C (teď ${tNow}°C)\\n`;\nif (prec > 0) msg += `srážky: ${prec} mm\\n`;\nif (wind) msg += `vítr max: ${Math.round(wind)} km/h\\n`;\nmsg += `\\n📅 *Dnešní program*\\n`;\n\nif (events.length === 0) {\n  msg += 'Žádné události.';\n} else {\n  for (const e of events) {\n    const s = e.start?.dateTime || e.start?.date;\n    const en = e.end?.dateTime || e.end?.date;\n    let time = '';\n    if (e.start?.dateTime) {\n      const sd = new Date(s);\n      const ed = new Date(en);\n      const fmt = d => d.toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Prague'});\n      time = `${fmt(sd)}–${fmt(ed)}`;\n    } else {\n      time = 'cely den';\n    }\n    const title = e.summary || '(bez nazvu)';\n    const loc = e.location ? ` 📍 ${e.location}` : '';\n    const cal = e.organizer?.displayName || e.organizer?.email?.split('@')[0] || '';\n    const calTag = cal ? ` _(${cal})_` : '';\n    msg += `• ${time} — ${title}${loc}${calTag}\\n`;\n  }\n}\n\nreturn [{ json: { text: msg } }];"
+      },
+      "id": "format",
+      "name": "Sestav zpravu",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, -96]
+    },
+    {
+      "parameters": {
+        "chatId": "REDACTED_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "tg",
+      "name": "Telegram Send",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1568, -96],
+      "webhookId": "REDACTED_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "REDACTED_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "minAccessRole", "value": "reader"},
+            {"name": "showHidden", "value": "false"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "listcal",
+      "name": "List Calendars",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [224, -192],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REDACTED_CREDENTIAL_ID",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items",
+        "options": {}
+      },
+      "id": "split",
+      "name": "Split Calendars",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [448, -192]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $now.startOf('day') }}",
+        "timeMax": "={{ $now.endOf('day') }}",
+        "options": {
+          "orderBy": "startTime"
+        }
+      },
+      "id": "getev",
+      "name": "Get Events Per Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [672, -192],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REDACTED_CREDENTIAL_ID",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron 7:00 Po-Pa": {
+      "main": [[
+        {"node": "Open-Meteo Olomouc", "type": "main", "index": 0},
+        {"node": "List Calendars", "type": "main", "index": 0}
+      ]]
+    },
+    "Aggregate Events": {
+      "main": [[{"node": "Merge", "type": "main", "index": 0}]]
+    },
+    "Open-Meteo Olomouc": {
+      "main": [[{"node": "Merge", "type": "main", "index": 1}]]
+    },
+    "Merge": {
+      "main": [[{"node": "Sestav zpravu", "type": "main", "index": 0}]]
+    },
+    "Sestav zpravu": {
+      "main": [[{"node": "Telegram Send", "type": "main", "index": 0}]]
+    },
+    "List Calendars": {
+      "main": [[{"node": "Split Calendars", "type": "main", "index": 0}]]
+    },
+    "Split Calendars": {
+      "main": [[{"node": "Get Events Per Calendar", "type": "main", "index": 0}]]
+    },
+    "Get Events Per Calendar": {
+      "main": [[{"node": "Aggregate Events", "type": "main", "index": 0}]]
+    }
+  }
+}
